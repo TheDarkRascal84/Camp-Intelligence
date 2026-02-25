@@ -1,0 +1,104 @@
+version: "3.9"
+
+# =============================================================================
+# Camp Intelligence - Docker Compose (Proxmox Local Deployment)
+# =============================================================================
+# Usage:
+#   1. Copy .env.example to .env and fill in values
+#   2. docker compose up -d
+#   3. docker compose exec app pnpm run db:push   (first time only)
+#   4. Open http://<your-proxmox-ip>:3000
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Application (Node.js + React)
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: camp-intelligence-app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: mysql://campuser:${MYSQL_PASSWORD:-camppass}@db:3306/campintelligence
+      JWT_SECRET: ${JWT_SECRET}
+      VITE_APP_ID: ${VITE_APP_ID:-camp-intelligence-local}
+      OAUTH_SERVER_URL: ${OAUTH_SERVER_URL:-}
+      OWNER_OPEN_ID: ${OWNER_OPEN_ID:-}
+      BUILT_IN_FORGE_API_URL: ${BUILT_IN_FORGE_API_URL:-}
+      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - campnet
+    volumes:
+      - app_logs:/app/logs
+
+  # ---------------------------------------------------------------------------
+  # MySQL 8 Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    container_name: camp-intelligence-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: campintelligence
+      MYSQL_USER: campuser
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-camppass}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - campnet
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ucampuser", "-p${MYSQL_PASSWORD:-camppass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Don't expose MySQL port publicly - access only within Docker network
+    # Uncomment below ONLY for local debugging:
+    # ports:
+    #   - "127.0.0.1:3306:3306"
+
+  # ---------------------------------------------------------------------------
+  # Redis (for BullMQ background jobs)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: camp-intelligence-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - campnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Don't expose Redis publicly
+    # ports:
+    #   - "127.0.0.1:6379:6379"
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  campnet:
+    driver: bridge
