@@ -1,12 +1,14 @@
 # =============================================================================
 # Camp Intelligence - Dockerfile
-# Multi-stage build: build stage + lean production image
+# Single-stage build with native dependency support (argon2)
 # =============================================================================
 
-# ---- Stage 1: Build ----
-FROM node:22-alpine AS builder
+FROM node:22-alpine
 
-# Install pnpm
+# Install build tools required for native dependencies (argon2, bcrypt, etc.)
+RUN apk add --no-cache python3 make g++
+
+# Enable pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
@@ -18,28 +20,15 @@ COPY patches/ ./patches/
 # Install ALL dependencies (including devDeps needed for build)
 RUN pnpm install --frozen-lockfile
 
-# Copy source
+# Copy source code
 COPY . .
 
-# Build frontend + bundle server
+# Build the application (frontend + server bundle)
 RUN pnpm run build
 
-# ---- Stage 2: Production ----
-FROM node:22-alpine AS runner
-
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-WORKDIR /app
-
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-COPY patches/ ./patches/
-
-# Install production dependencies only
-RUN pnpm install --frozen-lockfile --prod
-
-# Copy built artifacts from builder
-COPY --from=builder /app/dist ./dist
+# Remove development dependencies to reduce image size
+# This keeps only production dependencies while preserving built artifacts
+RUN pnpm prune --prod
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S appgroup && \
